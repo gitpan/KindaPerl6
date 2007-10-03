@@ -1,0 +1,22 @@
+--- #YAML:1.0
+name:                KindaPerl6
+version:             0.001
+abstract:            A bootstrapping Perl 6 compiler with multiple emitter backends
+license:             perl
+generated_by:        ExtUtils::MakeMaker version 6.32
+distribution_type:   module
+requires:     
+    Carp:                          0
+    Data::Dump::Streamer:          0
+    Data::Dumper:                  0
+    Digest:                        0
+    Digest::MD5:                   0
+    Exporter:                      0
+    Getopt::Long:                  0
+    Perl::Tidy:                    0
+    Pod::Usage:                    0
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.2.html
+    version: 1.2
+author:
+    - The Pugs Team <perl6-compiler@perl.org>

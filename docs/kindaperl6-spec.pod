@@ -1,0 +1,222 @@
+KindaPer6 specification
+
+- in short: lexical subs and classes; metamodel interface; begin blocks; containers
+  - see individual files: 
+    begin-block.pod
+    lexical-class.pod
+    lexical-subs.pod
+
+- compilable with MP6, only until KP6 bootstraps
+  - MP6 spec is now frozen
+
+- pluggable, maybe hot pluggable:
+  grammar, object system, and the workflow itself
+
+  The initial default grammar engine could be reused from MP6  
+  Parrot backend could use TGE/PGE
+  Perl5 backend could use PCR, MO, Moose
+
+# Milestones
+
+- finish kp6-spec
+
+    Such that we know when it's finished
+
+- lexical subs 
+
+    Allows operator redefinition:
+    
+    my multi infix:<+> { ... }
+
+    But note that 'multi' is not part of the kp6 spec
+
+- lexical classes / first-class classes
+
+    Better support for grammar mutability
+
+    $?GRAMMAR   Which grammar am I in? (from S02)
+    @?GRAMMAR   Which nested grammars am I in?
+        
+- metamodel interface
+
+    Allow pluggable object models
+
+- begin blocks
+
+    This is needed to support separate compilation - that is, separate compile-time from run-time 
+
+- containers
+
+    This is needed to implement assignment - MP6 only supported binding.
+
+# Compiler
+
+- Pads and OO are implemented as external module calls
+- Containers?
+
+    http://www.mail-archive.com/perl6-language@perl.org/msg25373.html
+    ---
+    class Pad {
+     has %!myvars;
+     has Pad $.outer;
+    
+     method lookup(String $var) {
+       return %!myvars{$var} if exists %!myvars{$var};
+       return $.outer.lookup($var);
+     }
+     method set(String $var, $val) {
+       %!myvars{$var} = $val if exists %!myvars{$val};
+       return $.outer.lookup($var, $val);
+     }
+     ...
+    }
+    ---
+
+    from MiniPerl6-MO:
+    ---        
+    - "class" is a macro. It expands to a "module", with calls to MO.
+      The "module" AST is like:
+    
+      # A module is a "class" without the methods and attributes.
+      class Module {
+        has $.name          is Str;                     # Module Name;
+        has $.body          is Lit::Code;               # body of code
+      }
+    
+    - Macros are implemented in the grammar.
+    - It might be better to implement syntax for macros first, and then
+      implement "token" and "class" using real macros
+    
+    - Method calls can either be implemented with mo subroutine calls, or native method calls. 
+      It depends on the emitter
+    ---
+    
+    from MO/t/mi.t
+    ---
+    my $base = MO::Compile::Class::MI->new();
+    
+    my $point = MO::Compile::Class::MI->new(
+    	superclasses => [ $base ],
+    	instance_methods => [
+    		MO::Compile::Method::Simple->new(
+    			name       => "distance",
+    			definition => sub {
+    				my ( $self, $other_point ) = @_;
+    				die "stub";
+    			}
+    		),
+    	],
+    	attributes => [
+    		MO::Compile::Attribute::Simple->new(
+    			name => "x",
+    		),
+    		MO::Compile::Attribute::Simple->new(
+    			name => "y",
+    		),
+    	],
+    );
+    ---
+
+# Differences from MiniPerl6
+
+- assignment with '='
+
+- inheritance
+
+- trait blocks
+
+
+# Wish list
+
+- macros
+
+
+# Extensibility
+
+KP6 extensibility should make it is possible to implement Perl6 using it.
+Some test cases could be (as long as the backend supports it):
+
+- 'my' subroutines
+  - p5 backend can use Sub::Lexical instead (but it is a source filter)
+- 'my' classes
+    - lexical grammar changes, such as
+      my multi infix:<+> ...
+      - the p6-parser is executed in the lexical context under compilation
+    ---
+    <TimToady> when you're building the candidate list for a particular multi dispatch, it goes outward in the scopes and finds any candidates whose long name is not hidden by an inner scope
+    <TimToady> finally it adds in all the global multies
+    <fglock> I think what I mean is, the whole grammar is inside the scope
+    <TimToady> logically, yes
+    <TimToady> reverts to previous grammar at }
+    <fglock> rather than being a simple external module
+    <TimToady> yes, you generally have to construct an anonymous grammar
+    <TimToady> and that anon grammar may well be based on the OUTER:: anonymous grammar
+    <TimToady> the current grammar is also passed to eval, i think.
+    <TimToady> but not to require
+    <TimToady> so in the case of eval you need to remember the current grammar in $?GRAMMAR till run time
+    <TimToady> that anonymous grammar is where you probably want to store the modified infix etc. tables
+    <TimToady> rather than just temporizing, or in addition to temporizing
+    <TimToady> basically a GC problem; if anything refers to $?GRAMMAR you keep it around.
+    ---
+    
+- 'coro'
+
+- junctions
+
+
+# Desugarings to MP6
+
+- metamodel calls for OO
+
+- cps - continuation-passing style
+
+- explicit pads as program data
+  - not really needed - see note below
+- special blocks: BEGIN, LAST, ...
+  note - p5 can access pad structures using closures:
+  --- Perl 6 source
+    module Main;
+    my $y;  
+    my $z; 
+    BEGIN { 
+        my $x;  
+        $y = { $x };   
+        $z = { $x } 
+     }
+  --- Perl 5 run-time
+    INIT { 
+        Main::_begin_001_(); 
+    }
+    package Main;
+    my $y;  
+    my $z; 
+    sub _begin_001_ {
+        my $x;  
+        $y = sub { $x };   
+        $z = sub { $x } 
+    }
+  ---
+
+- parameter binding 
+  - already done by mp6, but it's incomplete
+
+
+# AST transformation engine
+
+Desugaring is processed by the ast-transformation engine
+
+    compiler workflow
+        ->
+    @visitors ---> visitor composer ---> AST traverser
+
+
+# See also
+
+- misc/pX/Common/lrep/Notes-Pugs.pm
+  some notes about compiler plugins
+
+- misc/pX/Aside/design_space_sketch_Feb_11
+  a previous plan
+  
+- Compiling Embedded Languages
+  conal.net/papers/saig00/compile-dsel.pdf

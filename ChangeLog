@@ -1,0 +1,75 @@
+ChangeLog for KindaPerl6
+
+2007-06-05
+- started "phase III" - completed milestones 1 and 2
+- started milestone 3
+- refactored Emitter::Token.pm to Visitor::Token.pm 
+- refactored Regex AST nodes
+
+2007-06-05
+"end of Phase II"
+The kp6 Milestones are:
+
+- finish kp6-spec
+- lexical subs 
+- lexical classes
+- metamodel interface
+- begin blocks
+- containers
+
+2007-02-16
+- Pad.clone
+- Code.pm 
+
+2007-02-07
+- added t/01-sanity, edited to fit the kp6 grammar
+- added the sanity errors to TODO list
+- fixed control block pads, logical ops
+- added 'coro', 'hypotheticals' prototypes to docs/
+
+2007-02-06
+- roles
+- added 'does' and 'is' class traits
+- no longer uses Class::MOP
+- reimplemented KindaPerl6::MOP to use p6-land data
+
+2007-02-05
+- CHECK blocks
+- deprecated 'Module' node; there is a more flexible 'CompUnit' instead
+- fixed 'method' token
+- method 'new' is added to all classes
+- added 'Native::Buf' node, for p5-land arguments (needed by Class::MOP)
+
+2007-02-04
+- working BEGIN blocks
+- new Pad methods: add_lexicals(), namespace(), declaration()
+- created COMPILER package
+- implemented ::=
+        my $aaa ::= 123; BEGIN { $aaa };
+    compiles to:
+        my $aaa; $aaa := 123; 123;
+- named subs exist at compile-time
+- deprecated modules:
+    KindaPerl6::Visitor::LexicalSub
+    KindaPerl6::Visitor::CreateEnv
+- updated FAQ, added ANNOUNCE
+
+2007-02-03
+- containers 
+- constants
+- simple begin blocks
+
+2007-01-28
+- GLOBAL namespace
+- %*ENV
+- metamodel
+
+2007-01-16
+- added ::Assign to the grammar
+- added Perl5-emitter visitor
+
+2007-01-15
+- LexicalSub visitor
+
+2007-01-12
+- AST dumper visitor

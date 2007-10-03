@@ -1,0 +1,310 @@
+
+
+<fglock> I guess I can build a 'closure' object that knows how to dump itself
+<fglock> but there is still the problem of dumping use'd CPAN modules
+<fglock> I don't think that's possible without 5-on-6
+<fglock> one possible solution is, perl5 modules are loaded twice - at compile and runtime
+<TimToady> assuming you can be sure of getting the same one...
+<TimToady> or at least one that has the same interface
+<TimToady> Ada was always big on separating the interface from the implementation so you could swap out the implementation without changing the interface
+<TimToady> the reload trick should work find for Perl 6, because we guarantee that the user can't modify the used.
+<TimToady> and we also guarantee that modules installed in the library have version numbers
+<TimToady> so in an a.b.c the b theoretically guarantees a unique interface.
+<TimToady> and you already presumably know how to save your own closures, or you wouldn't a compiler...
+
+# - kp6 needs a way to export subs to the runtime
+
+use Data::Dump::Streamer;
+use strict;
+
+sub X { print "ok" }
+
+print Dump( \&X );
+
+__END__
+
+xxxx - Possible BEGIN workflow:
+
+# there is no subs in a namespace - everything is either our or my
+our $main::var;  # in declaration order
+    package Main;
+    my $y;  
+    my $z; 
+    our $_SUB_begin_001_ = sub {
+        my $x;  
+        $y = sub { $x };   
+        $z = sub { $x } 
+    }
+    INIT { $Main::_SUB_begin_001_->() }
+
+
+#---
+
+use Data::Dump::Streamer;
+use strict;
+
+my $x;  BEGIN { $x = 4 };
+
+#   turns into 
+
+my $__CEV_x1 = \do { my $x };  
+INIT {
+        $$__CEV_x1 = 4;
+  print Dump $__CEV_x1;
+}
+  print Dump $__CEV_x1;
+
+#---
+
+BEGIN { 
+        use X @list;
+}
+
+#  turns into 
+
+BEGIN { 
+        require X;
+        # no X calls 'unimport' instead of 'import'
+        X.import( @list ) if UNIVERSAL::can('X', 'import');
+}
+
+# from perldoc -f require
+    sub require {
+        my ($filename) = @_;
+        if (exists $INC{$filename}) {
+                return 1 if $INC{$filename};
+                die "Compilation failed in require";
+        }
+        my ($realfilename,$result);
+        ITER: {
+                foreach $prefix (@INC) {
+                $realfilename = "$prefix/$filename";
+                if (-f $realfilename) {
+                        $INC{$filename} = $realfilename;
+                        $result = do $realfilename;
+                        last ITER;
+                }
+                }
+                die "Can't find $filename in \@INC";
+        }
+        if ($@) {
+                $INC{$filename} = undef;
+                die $@;
+        } elsif (!$result) {
+                delete $INC{$filename};
+                die "$filename did not return true value";
+        } else {
+                return $result;
+        }
+    }
+
+#---
+
+my $__CEV_x1 = \do { my $x }; 
+INIT { say $$__CEV_x1;  LEAVE { undefine $__CEV_x1 } }
+
+#---
+
+my $y;  my $z; BEGIN { my $x;  $y = { $x };   $z = { $x } }
+
+__END__
+
+- BEGIN blocks are executed at parse time
+
+    token BEGIN { BEGIN <block> { execute_begin; return ... } }
+  
+- CEV = "compile-time existing variables" (luqui++)
+
+- This is one case when BEGIN has a variable which doesn't exist at compile-time:
+  
+    for 1,2 { 
+        my $x = sub { 
+                my $y;  
+                BEGIN { $y = 42 }; 
+                say $y 
+        };  
+        $x() 
+    }
+
+<luqui> so, how about this: it is illegal to assign to non-existant varaibles at compile-time
+<luqui> we just need to define 'exists' appropriately
+<luqui> a variable exists if... it is in a closure that cannot be cloned?
+<luqui> that is, if $x can only ever refer to one thing, then it exists at compile-time
+<luqui> I like that...
+<luqui> so crap like this:   for 1,2 { my $x;  BEGIN { $x = 10 };  say $x }
+<luqui> is illegal
+<luqui> but:  { my $x;  BEGIN { $x = 10 };  sub foo() { $x } }
+<luqui> is not
+<luqui> (assuming that closure was in void context...)
+<luqui> then, in the pad structure, you can store existent variables and reasonably initialize them at the beginning of runtime
+<luqui> inside their scope...
+
+<fglock> it could work like this - each 'my' decl creates a new pad, at compile-time
+<fglock> and BEGIN blocks are moved to the start of the pad code
+<luqui> where by "moved to " you mean "executed and then the pad's environment is dumped at" ?
+
+<luqui> my $y;  for 1..rand(10) { my $x = $_;  BEGIN { $y = { $x } } }  $y()
+<luqui> now what?
+<luqui> I assume it will be 1 if the body ever gets executed
+<luqui> and undef otherwise
+
+<luqui> so to clarify, $y() can return undef, but regardless $y is a code object, and has to refer to something
+
+<TimToady> whether we can get the "first time through" uses compiler's pad thing to work is the real issue, I expect
+
+<TimToady> I agree with luqui on the general principle--a BEGIN can only influence structures that exist at compile time by side effect.  Other than that, all it can do is return a value.
+<TimToady> the "extra" question is whether there are extraordinary structures we can have at compile time that do things at run time
+<TimToady> and I think the answer is, don't sweat it for now.
+
+<luqui> right.  I think you can generate code to initialize all "compile-time existing" variables at the beginning of their scopes, and the semantics will be correct
+<luqui> (though it is indeed a bit tricky if they refer to each other)
+
+<luqui> my $x;   INIT { $x = 1 }  BEGIN { $x = 2 };   say $x;
+<luqui> or even:
+<fglock> that's a problem
+<luqui> n/m
+<luqui> oh dear
+<luqui> I was going to say that you have to move side-effects to the beginning of the scope where the affected variables were
+<luqui> however:
+*** koye [i=milan@195.252.85.84] has joined #perl6
+<luqui> my $x;   ...stuff { my $y;  BEGIN { $x = { $y };  $y = { $x } } ...stuff }
+<luqui> ahh, pathological examples, my favorite
+<luqui> it is impossible to initialize $x at the beginning of its scope
+<luqui> ok... so, BEGIN blocks can only work on "compile-time existing variables"  (this assumption is getting more and more useful)
+<luqui> so you don't scope them
+<luqui> they are all global
+<luqui> then you can rig them to refer to each other
+<luqui> but of course, that has GC problems...
+<fglock> I'm compiling to "desugared p6", which compiles either to p5 or parrot
+*** theorbtwo [n=theorb@dyn-62-56-59-40.dslaccess.co.uk] has joined #perl6
+<[particle]> you'll need weak references
+
+<luqui> hmm, so we need something where the creation of an object can claim a reference instead of creating it
+<luqui> this is not a standard language feature :-(
+<luqui> let's see here (brainstorming commencing)
+<luqui> all compile-time existing variables (CEVs) are globals with an extra level of indirection
+<fglock> what's a non-CEV example?
+*** hexmode [n=mah@pool-162-83-250-134.ny5030.east.verizon.net] has quit [Read error: 54 (Connection reset by peer)]
+<luqui> so:  "my $x;  BEGIN { $x = 4 };"   turns into "my $__CEV_x1 = \do { my $x };  $$__CEV_x1 = 4;"
+<luqui> non-CEVs are things like $x in for 1..3 { my $x }
+<fglock> k
+<luqui> then you undef the reference at the end of its scope
+<luqui> so:  "{ my $x;   say $x }"  turns into "my $__CEV_x1 ... ...;  { say $$__CEV_x1;  LEAVE { undefine $__CEV_x1 } }
+<luqui> the initialization of all CEVs happens first thing in the the program
+<luqui> before any other INIT blocks
+<luqui> I think that actually does solve the circular-dependency pathology
+<luqui> and the GC problem
+<luqui> it's just... ugly
+
+<luqui> my $y;  my $z; BEGIN { my $x;  $y = { $x };   $z = { $x } }
+<luqui> $x is not CEV, but you have to express that the variable that $y and $z are referencing are the same one
+
+
+---
+
+<fglock> is a BEGIN block compiled, and then executed - or is it compiled/executed a statement at a time
+<TimToady> BEGIN just compiles like a normal closure, but executes after final }
+<fglock> it can have a BEGIN inside it, right?
+<TimToady> yes
+<TimToady> but you don't need statement granulatity on you compiler pipeline
+<TimToady> closure granularity is good enough
+
+<masak> what about a BEGIN with an END in it?
+<TimToady> the END doesn't care
+<TimToady> still executes when the run-time is exiting
+<TimToady> all END/CHECK/INIT do are push a closure on a queue
+<TimToady> perhaps just push everything and let the caller decide pop vs shift.
+<TimToady> then the list always reflects lexical order, for which there is something to be said.
+<TimToady> especially if people add new blocks with weird execution orders, like dependencies that have to be calculated at run time.
+
+
+---
+
+about 'use'
+
+<fglock> requiring a disassembler is not a reasonable requirement for 6-on-6
+<fglock> I'll try to find other solutions
+<TimToady> for your own closures, surely you have the original AST
+<TimToady> or at least "had" at some time in the past...
+<fglock> yes - I'm working on that direction...
+<TimToady> and anything imported just has to have a "true name" that you can relink to at run time.
+*** GabrielVieira [i=mad@201.79.177.80] has quit [Read error: 110 (Connection timed out)]
+<fglock> I wonder if it would be useful to have the program dump'able at any time - as a side effect of having enough info available
+<TimToady> in fact, "is export" basically just makes a link to a name in a subpackage...
+<TimToady> the Smalltalkers would like that...
+<TimToady> but I'm not sure it's practical on every VM
+<fglock> basically, you have the source file, global variables, and the pads - only the stack is missing
+<fglock> but cps can take care of that
+<fglock> could
+<TimToady> you can't remember foreign stacks in any case, if you've called out to some other runtime that doesn't integrate with your cps
+<TimToady> which is why cps systems tend to shun outside "help", I suspect.
+<fglock> ah
+<TimToady> we could start a marketing campaign for "100% Pure Perl" I suppose, but it seems a bit unperlish...
+<TimToady> I suppose if you can replay all the API events to a non-cps system you can fake a continuation.
+<TimToady> ignoring side effects.
+<TimToady> and assuming you could restart the API in a consistent state.
+<TimToady> well, not today's problem.
+<fglock> sure :)
+<TimToady> anyway, assuming all imports are done with true names, a re-use at runtime only has to do a require, not an import.
+*** penk [n=ubuntu@218-162-96-76.dynamic.hinet.net] has joined #perl6
+<TimToady> course, the whole point of pragmas is to cheat...
+<TimToady> but maybe we can help them "cheat fair"
+*** spx2 [n=chatzill@89.37.70.170] has quit [Read error: 131 (Connection reset by peer)]
+<fglock> the 'use' implementation probably needs to install hooks to do the right thing at INIT
+<TimToady> and I'm saying that hopefully the right thing is just a require
+<TimToady> require just says "make sure the package aka (true names) are populated"
+<TimToady> normal importation should have mapped all aliases to package symbols that require will bring in
+<TimToady> so nothing needs to be realiased at run time.
+<fglock> you mean, the generated code is something like this?  require X; *s = \&X::s;
+<TimToady> that implies to me that "use Foo" resolves to "use Foo-1.2.3-JRANDOM" at compile time
+<TimToady> well, P6 does lexical imports by default, not typeglobs
+<fglock> what does it desugars to? require Foo-1.2.3-JRANDOM; s := X::s
+<fglock> how do you import a sub?
+<TimToady> I'm saying that if you have something aliased to X::s at compile time, the dump of that structure should preserve the alias without having to regenerate it a run time.
+<fglock> I mean, what does the dump would look like?
+<TimToady> how do you dump lexicals currently with their latest compile-time value?
+<fglock> I call a subroutine that is defined inside the lexical scope
+<fglock> an 'inspector' sub
+<TimToady> so if you've got "my $importsub = \&X::s" there...
+<TimToady> it just needs to find a way at run time to remap $importsub back to the "X::s" true name
+<TimToady> aka symbolic reference
+<TimToady> so basically linking is turning symbolic refs back into hard ones, I guess.
+<fglock> what is the p6 syntax for this? "my $importsub = \&X::s"
+<TimToady> phone &
+<kolibrie> pesky phones
+<TimToady> my &importsub := &X::s;
+<fglock> hmm - when to use ::= ?
+<TimToady> we might have to limit the exportation of anonymous subs though, I suppose.
+<TimToady> or assign them an obfuscated true name for linking purposes.
+<TimToady> for now we can just make "sub is export {...}" illegal
+*** renormalist [n=ss5@renormalist.net] has joined #perl6
+<TimToady> and if there's a custom import sub, it can handle its own semantics presumably...
+<fglock> I guess I need to start implementation - I'd like to have something runnable to experiment with
+<TimToady> including, presumably handing the user a thunk to poke into the INIT queue.
+<TimToady> for now assume you don't have to save anything anonymous across a use boundary.
+<TimToady> that's the main point of package namespaces, after all--to hold the public interface
+<luqui> why can't you use Data::Dump::Streamer as a catch-most method?
+*** elmex [n=elmex@pD9E9FE6B.dip.t-dialin.net] has joined #perl6
+<fglock> luqui: one reason is that it renames variables
+<luqui> hmp
+<fglock> another reason is to avoid cheating - this is 6-on-6, and it doesn't have a disassembler
+<luqui> ahh
+<luqui> okay, that makes sense
+<fglock> v6.pm does use DDS
+
+---
+
+compilation x parsing
+
+- These things must be emitted and created (eval'ed) right after they are parsed:
+    sub, variable, method declaration
+    no assignment, no binding
+    note that signatures can also declare variables:
+        sub x ( &todo ) { ... }
+        for @a -> $x { ... } 
+- what kind of things should not be executed?
+    - no restrictions
+- need a global 'current compiler pad'
+    - how to make it lexical?
+    - maybe use $?GRAMMAR to store it, or COMPILING::<$?PAD>
+    

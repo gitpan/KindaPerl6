@@ -1,0 +1,293 @@
+mp6/kp6 FAQ
+
+
+* Overview - What is mp6/kp6/v6?
+
+v6 is a perl6-on-perl6 project.
+It lives in the Pugs repository, under the v6/ directory.
+
+This is not the perl5 v6-alpha, see perl5/Pugs-Compiler-Perl6 for that.
+
+There are 4 subprojects under v6/:
+
+v6.pm is a plain translation of the perl5 v6.pm compiler, such that the modules could be interchangeable.
+This project is currently abandoned.
+
+v6-Compiler (full-p6) is meant as a more advanced compiler, but it is also more difficult to bootstrap because it needs a more complete Perl 6 compiler.
+
+v6-MiniPerl6 (mp6) is a subset of Perl 6 used to bootstrap the full Perl 6.
+v6-MiniPerl6 is bootstrapped with perl5.
+
+v6-KindaPerl6 (kp6) is a reimplementation of mp6, with a very flexible compiler workflow.
+kp6 uses plugins in order to implement perl6 semantics over several backends.
+kp6 is not currently bootstrapped - it is compiled with the mp6 compiler.
+
+The current plan is to bootstrap full-p6 using kp6.
+
+
+* How can i help?
+
+    (todo - the previous list was obsolete)
+
+* What subset of Perl 6 is covered by mp6?
+  (from miniperl6-spec.pod)
+
+    - A program is organized in compilation units. All statements must be inside a 'class' declaration:
+        class X { ... }
+    - All statements finish with semicolon
+    - Only allow one feed of positional arguments
+    - In Signature, disallow "is slurpy", "is optional", "is named"
+        (*@bad) ($bad?) (:$bad)
+    - But we do allow Hash and Array and Tree unpacking:
+        sub foo ([$a, $b, $c], {:$x, :$y}, ::Tree $top (:$left, :$right)) { ... }
+
+        foo([1, 2, 3], { x => 1, y => 2 }, ::Tree( left => 1, right => 2 ));
+
+        # This compiles to:
+        sub foo {
+            my perl6::Tree $top;
+            my ($a, $b, $c, $top, $x, $y, $left, $right);
+            ($a, $b, $c)  = @_[0];
+            ($x, $y)      = @_[1]{'x', 'y'};
+            $top          = @_[2];
+            ($left, $right) = ($top.left, $top.right);
+            ...
+        }
+        foo([1, 2, 3], { x => 1, y => 2 });
+
+    - As a consequence, object constructor calls must be written in
+      coercion form:
+        ::Foo( x => 1, y => 2 );   # NOT Foo.new
+
+    - Only allow item context
+    - No laziness; all List are Seq
+    - No subtyping (inheritance) or role mixins
+    - No first-class Capture and Signature objects, which means no \$x nor :(foo)
+    - No assignment, only bindings, but don't panic:
+        $x := $x + 1;   # name = IntOp(named(Int))
+        # $x = $x + 1
+      The reason is we have to eliminate one of them to avoid dealing with:
+        $x := $y;
+        $x = 123;
+      Because assignment always involve box(unbox()), so emitting binding to
+      Perl 5 is much more straightforward as $x is always just a Int in
+      ($x := $x + 1), never SomePossiblyTiedScalarContainerType that needs to
+      have special FETCH magic associated with it.
+
+      Also it's inevitable with eliminating list context, because:
+        ($x, $y, $z) := (1, 2); # compile-time error
+        ($x, $y, $z) = (1, 2);  # list-context-undef-fill that we don't want to deal with
+      because infix:<=> almost always imply slurpiness with LHS is not a simple scalar,
+      eliminating it is consistent with eliminating list context.
+
+    - Allow Type annotations. Preserve them Perl 5 emitted code using simple Typed vars:
+        # MiniPerl6
+        my Int $x;
+        my perl5:CGI $x;
+
+        # Compiled Perl 5
+        my perl6::Int $x;
+        my CGI $x;
+      However, the compiler adds no extra assertions so types never slows programs down
+      in MiniPerl6 land.
+
+    - Closures, but no coroutines nor continuations
+    - Closed grammatical categories and precedence levels
+    - No macros; no BEGIN blocks!
+    - No multis
+
+* can mp6 be run in perl5?
+
+yes, and it's currently the only fully working implementation
+
+* can mp6 be run in pugs?
+
+nobody tried ???
+
+* can mp6 be run in parrot?
+
+There is an implementation of a parrot emitter, but it cannot run full-mp6 yet.
+
+The implementation of the PAST emitter is also under way.
+
+* can mp6 be run in ruby/javascript/c#/c/d ?
+
+There is some work done for a D implementation.
+
+Ruby and Javascript can probably reuse some work that was done for redsix and pil2js.
+
+
+* Running mp6
+
+There are control scripts for compiling mp6 to several backends:
+
+Perl 5:
+
+  perl mp6-perl5-boot.pl < source.pl > dest.pl
+  
+Parrot:
+
+  perl mp6-parrot.pl < source.pl > dest.pir
+
+Parrot-PAST:
+
+  perl mp6-past.pl < source.pl > dest.past
+
+
+- Bootstrapping mp6-perl5:
+
+This script rebuilds the lib5 directory. It creates a directory named lib5-new:
+
+  perl util/build-perl5.sh
+  mv lib5 lib5-old
+  mv lib5-new lib5
+
+
+- What subset of Perl 6 is covered by kp6?
+
+kp6 reuses the mp6 grammar.
+The main differences are not visible - kp6 adds an extra AST processing step.
+kp6 adds:
+
+    - lexical subs 
+    - metamodel interface
+    - lexical classes (planned, not implemented)
+    - begin blocks
+    - containers
+
+- Running kp6
+
+kp6 works by creating a parse tree, which is then submitted to a list of AST processors.
+
+The 'kp6-perl5.pl' script is one of the possible compiler 'workflows' that can be built with kp6.
+
+  perl kp6-perl5.pl < source.pm > dest.pm
+
+
+The lib5/ directory needs to be included in order to run kp6 programs:
+
+  echo ' class X { say 42; }  ' | perl kp6-perl5.pl | perl -Ilib5 
+  ---
+  42
+
+- Compiling kp6
+
+As of this writing, kp6 is not bootstrapped (just because there is no script to do it).
+
+The kp6 source files can be compiled with mp6. There is a 'mp6.pl' script in kp6 directory:
+
+  perl mp6.pl < lib/KindaPerl6/Visitor/EmitPerl5.pm > lib5/KindaPerl6/Visitor/EmitPerl5.pm
+  
+
+* How much of the test suite passes?
+
+No tests pass at all.
+
+With mp6, it was possible to pass t/01-sanity/01-tap.t by preprocess
+removal of "use v6-alpha;" and wrapping the input in "class Main {...}".
+Something similar might be done for kp6.  See pugs/project_planning/TALK.
+
+
+* How much of the test suite will eventually pass?
+
+Passing tests depends on improving the grammar and the runtime.
+Instead, kp6 focus is on compiler architecture and on backend semantics.
+
+
+* Why does parsing take so much time?
+
+  "Ziggy6" pasted "Total Elapsed Time = 20.53264"
+  Total Elapsed Time = 20.53264 Seconds
+    User+System Time = 19.45264 Seconds
+  Exclusive Times
+  %Time ExclSec CumulS #Calls sec/call Csec/c  Name
+   42.7   8.307  8.446 253776   0.0000 0.0000  MiniPerl6::Perl5::Match::new
+   30.4   5.918  5.876 150690   0.0000 0.0000  MiniPerl6::Perl5::Match::to
+   15.0   2.919 11.171  36356   0.0001 0.0003  MiniPerl6::Grammar::ws
+   8.58   1.669  1.688 253776   0.0000 0.0000  MiniPerl6::Perl5::Match::DESTROY
+   5.58   1.085  1.037 259216   0.0000 0.0000  MiniPerl6::Perl5::Match::__ANON__
+   5.36   1.042 12.035  20975   0.0000 0.0006  MiniPerl6::Grammar::opt_ws
+   4.67   0.909  2.824  36400   0.0000 0.0001  MiniPerl6::Grammar::newline
+    ...
+
+The code generated by the parser makes several method calls on each
+character - this can be optimized with inlining (not planned for mp6).
+A MiniPerl6::Perl5::Match is created for every character.
+
+* Re parser:
+
+The parser is recursive-descent.
+
+* Why isn't kp6 self-hosting? 
+
+kp6 can now be self-hosting. It depends on improving the runtime a bit, and possibly adding an optimizer.
+
+* Why isn't there a makefile to regenerate v6-KindaPerl6/lib5/ ?
+
+the workflow for compiling kp6 is not fixed - you can add or take AST transformation steps
+kp6-1 will have a script
+
+* What is the plan for kp6?
+
+- provide a minimal bootstrapped language implementation for bootstrapping p6-on-p6
+
+    Extra features over mp6 - allow the implementation of BEGIN blocks, flexible grammar.
+
+- implement a flexible/pluggable compiler engine
+
+    This is currently done with a Visitor pattern for AST transforms
+
+- lexical subs 
+
+    Allows operator redefinition:
+    
+    my multi infix:<+> { ... }
+
+    But note that 'multi' is not part of the kp6 spec
+
+- lexical classes / first-class classes
+
+    Better support for grammar mutability
+
+    $?GRAMMAR   Which grammar am I in? (from S02)
+    @?GRAMMAR   Which nested grammars am I in?
+        
+    update: lexical classes will not be implemented
+        
+- metamodel interface
+
+    Allow pluggable object models
+
+- begin blocks
+
+    This is needed to support separate compilation - that is, separate compile-time from run-time 
+
+- containers
+
+    This is needed to implement assignment - MP6 only supported binding.
+
+
+* Is kp6 needed for bootstrapping 6-on-6?
+
+No. 6-on-6 can also be bootstrapped with:
+
+- parrot
+
+- pugs
+
+- v6.pm
+
+- plain mp6
+
+- redsix
+
+* Miscellaneous Notes
+
+fglock: hmm - maybe for mp6; need to find a way to do eval() too - http://cataclysm.cx/2006/08/19/closures-in-c/
+Title: eaten by a grue :: Closures in C
+
+* See Also
+
+A Two-Dimensional Separation of Concerns for Compiler Construction
+www.cis.uab.edu/gray/Pubs/sac-2005-carl.pdf 
+- Compares the visitor pattern (used by kp6) with other approaches
